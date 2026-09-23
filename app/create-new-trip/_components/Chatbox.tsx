@@ -7,69 +7,490 @@ import { Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 
-import EmptyBoxState from "./EmptyBoxState";
 import GroupSizeUi from "./GroupSizeUi";
 import BudgetUi from "./BudgetUi";
 import SelectDaysUi from "./SelectDaysUi";
 import FinalUi from "./FinalUi";
 
 type Message = {
-  role: string;
+  role: "user" | "assistant";
   content: string;
   ui?: string;
-  [key: string]: any;
 };
 
-function Chatbox() {
+type TripData = {
+  origin: string;
+  destination: string;
+  groupSize: string;
+  budget: string;
+  duration: string;
+};
+
+type TripPlan = {
+  destination: string;
+  origin: string;
+  duration: string;
+  budget: string;
+  group_size: string;
+
+  hotels?: {
+    hotel_name: string;
+    hotel_address: string;
+    price_per_night: string;
+    hotel_image_url: string;
+
+    geo_coordinates?: {
+      latitude: number;
+      longitude: number;
+    };
+
+    rating: number;
+    description: string;
+  }[];
+
+  itinerary?: {
+    day: number;
+    day_plan: string;
+    best_time_to_visit_day: string;
+
+    activities?: {
+      place_name: string;
+      place_details: string;
+      place_image_url: string;
+
+      geo_coordinates?: {
+        latitude: number;
+        longitude: number;
+      };
+
+      place_address: string;
+      ticket_pricing: string;
+      time_travel_each_location: string;
+      best_time_to_visit: string;
+    }[];
+  }[];
+};
+
+type ChatboxProps = {
+  onTripGenerated?: (
+    trip: TripPlan
+  ) => void | Promise<void>;
+
+  onViewTrip?: () => void;
+
+  isSavingTrip?: boolean;
+};
+
+function Chatbox({
+  onTripGenerated,
+  onViewTrip,
+  isSavingTrip = false,
+}: ChatboxProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [userInput, setUserInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [isFinal, setIsFinal] = useState(false);
 
+  const [tripData, setTripData] = useState<TripData>({
+    origin: "",
+    destination: "",
+    groupSize: "",
+    budget: "",
+    duration: "",
+  });
+
+  /*
+   * Start every new trip by explicitly asking
+   * for the destination.
+   *
+   * We intentionally do NOT render EmptyBoxState here,
+   * because that could allow a suggestion to bypass
+   * the destination question.
+   */
   useEffect(() => {
-    if (messages.length === 0) return;
+    setMessages([
+      {
+        role: "assistant",
+        content: "Where would you like to travel?",
+        ui: "none",
+      },
+    ]);
+  }, []);
 
-    const lastMessage = messages[messages.length - 1];
+  const addAssistantMessage = (
+    content: string,
+    ui?: string
+  ) => {
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: "assistant",
+        content,
+        ui,
+      },
+    ]);
+  };
 
-    if (
-      lastMessage.role === "assistant" &&
-      lastMessage.ui === "Final"
-    ) {
-      setIsFinal(true);
+  const addUserMessage = (content: string) => {
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: "user",
+        content,
+      },
+    ]);
+  };
 
-      // GenerateTrip();
+  /*
+   * Determine which piece of information
+   * is still missing.
+   *
+   * Destination always comes first.
+   */
+  const getNextStep = (data: TripData) => {
+    if (!data.destination) {
+      return "destination";
     }
-  }, [messages]);
 
-  const RenderGenerativeUi = (ui: string) => {
+    if (!data.origin) {
+      return "origin";
+    }
+
+    if (!data.groupSize) {
+      return "groupSize";
+    }
+
+    if (!data.budget) {
+      return "budget";
+    }
+
+    if (!data.duration) {
+      return "duration";
+    }
+
+    return "final";
+  };
+
+  /*
+   * Ask the next question based on the
+   * information we already have.
+   */
+  const askNextQuestion = (data: TripData) => {
+    const nextStep = getNextStep(data);
+
+    switch (nextStep) {
+      case "destination":
+        addAssistantMessage(
+          "Where would you like to travel?",
+          "none"
+        );
+        break;
+
+      case "origin":
+        addAssistantMessage(
+          "Where are you travelling from?",
+          "none"
+        );
+        break;
+
+      case "groupSize":
+        addAssistantMessage(
+          "Who are you travelling with?",
+          "groupSize"
+        );
+        break;
+
+      case "budget":
+        addAssistantMessage(
+          "What is your budget?",
+          "budget"
+        );
+        break;
+
+      case "duration":
+        addAssistantMessage(
+          "How many days is your trip?",
+          "TripDuration"
+        );
+        break;
+
+      case "final":
+        generateTrip(data);
+        break;
+    }
+  };
+
+  /*
+   * Detect inputs such as:
+   *
+   * India to UK
+   * Delhi to London
+   * New York to Paris
+   *
+   * If both locations are supplied,
+   * we save both at once.
+   */
+  const extractLocations = (text: string) => {
+    const match = text.match(
+      /^(.+?)\s+(?:to|→|-)\s+(.+)$/i
+    );
+
+    if (!match) {
+      return null;
+    }
+
+    const origin = match[1].trim();
+    const destination = match[2].trim();
+
+    if (!origin || !destination) {
+      return null;
+    }
+
+    return {
+      origin,
+      destination,
+    };
+  };
+
+  /*
+   * Generate the final trip using the
+   * existing Ollama API route.
+   */
+  const generateTrip = async (data: TripData) => {
+    setLoading(true);
+    setIsFinal(true);
+
+    addAssistantMessage(
+      "Thanks! I'm generating your personalized trip plan.",
+      "Final"
+    );
+
+    try {
+      const conversation = [
+        {
+          role: "user",
+          content: `Starting Location: ${data.origin}`,
+        },
+        {
+          role: "user",
+          content: `Destination: ${data.destination}`,
+        },
+        {
+          role: "user",
+          content: `Group Size: ${data.groupSize}`,
+        },
+        {
+          role: "user",
+          content: `Budget: ${data.budget}`,
+        },
+        {
+          role: "user",
+          content: `Trip Duration: ${data.duration}`,
+        },
+      ];
+
+      console.log(
+        "========== GENERATING FINAL TRIP =========="
+      );
+
+      console.log(data);
+
+      const { data: response } = await axios.post(
+        "/api/aimodel",
+        {
+          messages: conversation,
+          isFinal: true,
+        }
+      );
+
+      console.log(
+        "========== FINAL TRIP RESPONSE =========="
+      );
+
+      console.log(response);
+
+      if (response?.trip_plan) {
+        /*
+         * Wait for the parent component to save
+         * the generated trip into Convex.
+         */
+        await onTripGenerated?.(
+          response.trip_plan
+        );
+      } else {
+        console.error(
+          "No trip_plan was returned from Ollama."
+        );
+
+        throw new Error(
+          "No trip plan was returned."
+        );
+      }
+    } catch (error: any) {
+      console.error(
+        "========== FINAL TRIP ERROR =========="
+      );
+
+      console.error(error);
+
+      addAssistantMessage(
+        "I couldn't generate or save the trip plan. Please try again."
+      );
+
+      setIsFinal(false);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /*
+   * Handle user answers.
+   */
+  const handleMessage = async (text: string) => {
+    const message = text.trim();
+
+    if (!message || loading || isFinal) {
+      return;
+    }
+
+    addUserMessage(message);
+
+    setUserInput("");
+
+    const nextStep = getNextStep(tripData);
+
+    const updatedData = {
+      ...tripData,
+    };
+
+    /*
+     * LOCATION HANDLING
+     *
+     * If the user gives:
+     *
+     * India to UK
+     *
+     * we immediately extract both.
+     */
+    if (
+      nextStep === "destination" ||
+      nextStep === "origin"
+    ) {
+      const locations =
+        extractLocations(message);
+
+      if (locations) {
+        updatedData.origin =
+          locations.origin;
+
+        updatedData.destination =
+          locations.destination;
+      } else if (
+        nextStep === "destination"
+      ) {
+        updatedData.destination = message;
+      } else {
+        updatedData.origin = message;
+      }
+    }
+
+    /*
+     * GROUP SIZE
+     */
+    else if (nextStep === "groupSize") {
+      updatedData.groupSize = message;
+    }
+
+    /*
+     * BUDGET
+     */
+    else if (nextStep === "budget") {
+      updatedData.budget = message;
+    }
+
+    /*
+     * TRIP DURATION
+     */
+    else if (nextStep === "duration") {
+      updatedData.duration = message;
+    }
+
+    setTripData(updatedData);
+
+    console.log(
+      "========== TRIP DATA =========="
+    );
+
+    console.log(updatedData);
+
+    const followingStep =
+      getNextStep(updatedData);
+
+    /*
+     * Once all information is collected,
+     * generate the final trip.
+     */
+    if (followingStep === "final") {
+      await generateTrip(updatedData);
+    } else {
+      askNextQuestion(updatedData);
+    }
+  };
+
+  const onSend = async (text?: string) => {
+    await handleMessage(
+      text ?? userInput
+    );
+  };
+
+  /*
+   * Render the interactive UI components
+   * used during trip planning.
+   */
+  const RenderGenerativeUi = (
+    ui: string
+  ) => {
     switch (ui) {
       case "groupSize":
         return (
           <GroupSizeUi
-            onSelectedOption={(value) => onSend(value)}
+            onSelectedOption={(value) =>
+              onSend(value)
+            }
           />
         );
 
       case "budget":
         return (
           <BudgetUi
-            onSelectedOption={(value) => onSend(value)}
+            onSelectedOption={(value) =>
+              onSend(value)
+            }
           />
         );
 
       case "TripDuration":
         return (
           <SelectDaysUi
-            onSelectedOption={(value) => onSend(value)}
+            onSelectedOption={(value) =>
+              onSend(value)
+            }
           />
         );
 
       case "Final":
         return (
           <FinalUi
-            isLoading={isFinal}
+            isLoading={
+              loading || isSavingTrip
+            }
             viewTrip={() => {
-              console.log("View Trip");
+              if (
+                !loading &&
+                !isSavingTrip
+              ) {
+                onViewTrip?.();
+              }
             }}
           />
         );
@@ -79,146 +500,106 @@ function Chatbox() {
     }
   };
 
-  const onSend = async (text?: string) => {
-    const message = text ?? userInput;
-
-    if (!message.trim() || loading) return;
-
-    // Message sent to AI
-    let finalMessage = message;
-
-    if (message.toLowerCase().includes(" to ")) {
-      const [origin, destination] = message.split(/to/i);
-
-      finalMessage = `
-Origin: ${origin.trim()}
-Destination: ${destination.trim()}
-      `;
-    }
-
-    // Message shown to user
-    const newMsg: Message = {
-      role: "user",
-      content: message,
-    };
-
-    setMessages((prev) => [...prev, newMsg]);
-    setUserInput("");
-    setLoading(true);
-
-    try {
-      const { data } = await axios.post("/api/aimodel", {
-        messages: [
-          ...messages,
-          {
-            role: "user",
-            content: finalMessage,
-          },
-        ],
-      });
-
-      console.log("API Response:", data);
-
-      if (data) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content: data.resp,
-            ui: data.ui,
-            ...data,
-          },
-        ]);
-      }
-          } catch (error) {
-      console.error("Axios Error:", error);
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: "Something went wrong. Please try again.",
-        },
-      ]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-2xl border bg-white">
-      {messages.length === 0 && (
-        <EmptyBoxState
-          onSelectOption={(value: string) => onSend(value)}
-        />
-      )}
-
       {/* Chat Messages */}
-      <section className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
-        {messages.map((msg, index) => (
-          <div
-            key={index}
-            className={`flex ${
-              msg.role === "user"
-                ? "justify-end"
-                : "justify-start"
-            }`}
-          >
-            <div className="max-w-[90%]">
-              <div
-                className={`rounded-xl px-4 py-3 ${
-                  msg.role === "user"
-                    ? "bg-primary text-white"
-                    : "bg-slate-100 text-slate-800"
-                }`}
-              >
-                <p className="text-sm leading-6 whitespace-pre-wrap">
-                  {msg.content}
-                </p>
+      <section className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+        {messages.map(
+          (msg, index) => (
+            <div
+              key={index}
+              className={`flex ${
+                msg.role === "user"
+                  ? "justify-end"
+                  : "justify-start"
+              }`}
+            >
+              <div className="max-w-[90%]">
+                <div
+                  className={`rounded-xl px-4 py-3 ${
+                    msg.role === "user"
+                      ? "bg-primary text-white"
+                      : "bg-slate-100 text-slate-800"
+                  }`}
+                >
+                  <p className="whitespace-pre-wrap text-sm leading-6">
+                    {msg.content}
+                  </p>
+                </div>
+
+                {msg.role ===
+                  "assistant" &&
+                  msg.ui && (
+                    <div className="mt-3">
+                      {RenderGenerativeUi(
+                        msg.ui
+                      )}
+                    </div>
+                  )}
               </div>
-
-              {msg.role === "assistant" &&
-                msg.ui && (
-                  <div className="mt-3">
-                    {RenderGenerativeUi(msg.ui)}
-                  </div>
-                )}
             </div>
-          </div>
-        ))}
+          )
+        )}
 
-        {loading && (
+        {/* Normal loading state */}
+        {loading && !isFinal && (
           <div className="flex justify-start">
             <div className="rounded-xl bg-slate-100 px-4 py-3">
               <div className="flex items-center gap-2">
-                <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
-                <div className="h-2 w-2 rounded-full bg-primary animate-pulse delay-150" />
-                <div className="h-2 w-2 rounded-full bg-primary animate-pulse delay-300" />
+                <div className="h-2 w-2 animate-pulse rounded-full bg-primary" />
+
+                <div className="h-2 w-2 animate-pulse rounded-full bg-primary delay-150" />
+
+                <div className="h-2 w-2 animate-pulse rounded-full bg-primary delay-300" />
+
                 <span className="ml-2 text-sm text-gray-500">
-                  Thinking...
+                  Planning your trip...
                 </span>
               </div>
             </div>
           </div>
         )}
+
+        {/* Saving trip state */}
+        {isSavingTrip && (
+          <div className="flex justify-start">
+            <div className="rounded-xl bg-emerald-50 px-4 py-3">
+              <p className="text-sm font-medium text-emerald-700">
+                Saving your trip...
+              </p>
+            </div>
+          </div>
+        )}
       </section>
 
-      {/* Input */}
+      {/* Message Input */}
       <section className="border-t bg-white p-4">
         <div className="relative">
           <Textarea
             placeholder="Type your message..."
             className="min-h-[100px] resize-none rounded-xl pr-14 focus-visible:ring-0"
             value={userInput}
-            onChange={(e) => setUserInput(e.target.value)}
-            disabled={loading || isFinal}
+            onChange={(e) =>
+              setUserInput(
+                e.target.value
+              )
+            }
+            disabled={
+              loading ||
+              isFinal ||
+              isSavingTrip
+            }
           />
 
           <Button
             size="icon"
             className="absolute bottom-3 right-3 rounded-full"
             onClick={() => onSend()}
-            disabled={loading || isFinal}
+            disabled={
+              loading ||
+              isFinal ||
+              isSavingTrip
+            }
           >
             <Send className="h-4 w-4" />
           </Button>

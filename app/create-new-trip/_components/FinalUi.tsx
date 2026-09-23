@@ -3,32 +3,43 @@ import { Globe2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 
-function FinalUi({ viewTrip }: any) {
+type FinalUiProps = {
+  isLoading?: boolean;
+  viewTrip?: () => void;
+};
+
+function FinalUi({
+  isLoading = false,
+  viewTrip,
+}: FinalUiProps) {
   return (
-    <div className="flex flex-col items-center justify-center mt-6 p-6 bg-white rounded-xl border shadow-sm">
-      <Globe2 className="text-primary text-4xl animate-bounce" />
+    <div className="mt-6 flex flex-col items-center justify-center rounded-xl border bg-white p-6 shadow-sm">
+      <Globe2
+        className={`text-primary ${
+          isLoading ? "animate-bounce" : ""
+        }`}
+        size={40}
+      />
 
       <h2 className="mt-3 text-lg font-semibold text-primary">
-        ✈️ Planning your dream trip...
+        {isLoading
+          ? "✈️ Planning your dream trip..."
+          : "🎉 Your trip is ready!"}
       </h2>
 
-      <p className="text-gray-500 text-sm text-center mt-1">
-        Gathering best destinations, activities, and travel details for you.
+      <p className="mt-1 text-center text-sm text-gray-500">
+        {isLoading
+          ? "Gathering best destinations, activities, and travel details for you."
+          : "Your personalized trip plan has been generated successfully."}
       </p>
 
       <Button
-        disabled
+        disabled={isLoading}
         onClick={viewTrip}
-        className="mt-2 w-full"
+        className="mt-4 w-full"
       >
-        View Trip
+        {isLoading ? "Generating Trip..." : "View Trip"}
       </Button>
-
-      {/*
-      <div className="w-48 h-2 bg-gray-200 rounded-full mt-4 overflow-hidden">
-        <div className="h-2 bg-primary animate-pulse w-3/4"></div>
-      </div>
-      */}
     </div>
   );
 }

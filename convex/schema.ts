@@ -8,4 +8,9 @@ export default defineSchema({
     email: v.string(),
     subscription: v.optional(v.string()),
   }),
+
+  TripTable: defineTable({
+    userId: v.string(),
+    tripPlan: v.any(),
+  }).index("by_userId", ["userId"]),
 });
