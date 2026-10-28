@@ -288,44 +288,63 @@ function validateItinerary(
 /**
  * Ask Ollama to generate the response.
  */
+
 async function generateWithOllama(prompt: string) {
-  const response = await fetch(OLLAMA_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      prompt,
-      stream: false,
-      format: "json",
-      options: {
-        temperature: 0.1,
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const apiToken = process.env.CLOUDFLARE_AI_TOKEN;
+
+  if (!accountId || !apiToken) {
+    throw new Error(
+      "Missing CLOUDFLARE_ACCOUNT_ID or CLOUDFLARE_AI_TOKEN environment variable."
+    );
+  }
+
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/@cf/meta/llama-3.1-8b-instruct-fp8`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiToken}`,
+        "Content-Type": "application/json",
       },
-    }),
-  });
+      body: JSON.stringify({
+        messages: [
+          {
+            role: "system",
+            content:
+              "Follow the user's prompt exactly. Return valid JSON when JSON is requested. Do not include markdown fences around JSON.",
+          },
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+        temperature: 0.1,
+        max_tokens: 4096,
+      }),
+    }
+  );
 
   const data = await response.json();
 
-  if (!response.ok) {
-    console.error("========== OLLAMA API ERROR ==========");
+  if (!response.ok || data?.success === false) {
+    console.error("========== CLOUDFLARE AI ERROR ==========");
     console.error("Status:", response.status);
     console.error(JSON.stringify(data, null, 2));
 
     throw new Error(
-      data?.error || "Ollama request failed."
+      data?.errors?.[0]?.message ||
+        "Cloudflare AI request failed."
     );
   }
 
-  const content = data?.response;
+  const content = data?.result?.response;
 
   if (!content) {
-    console.error(
-      "========== EMPTY OLLAMA RESPONSE =========="
-    );
+    console.error("========== EMPTY CLOUDFLARE AI RESPONSE ==========");
     console.error(JSON.stringify(data, null, 2));
 
-    throw new Error("Ollama returned an empty response.");
+    throw new Error("Cloudflare AI returned an empty response.");
   }
 
   return content;
